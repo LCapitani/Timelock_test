@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Lock</title>
+<style>
+  :root{ box-sizing:border-box; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; }
+  html,body{ height:100%; margin:0; background:#000; overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif; }
+
+  #bg{ position:fixed; inset:0; background:#242426 center/cover no-repeat; }
+  #scrim{ position:fixed; inset:0; background:rgba(0,0,0,.22); }
+
+  #lock{ position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
+    color:#fff; padding:calc(env(safe-area-inset-top,0px) + 64px) 20px calc(env(safe-area-inset-bottom,0px) + 22px);
+    transition: transform .5s cubic-bezier(.4,0,.2,1), opacity .5s ease; }
+  #lock.hide{ transform:translateY(-100%); opacity:0; pointer-events:none; }
+
+  #clockWrap{ text-align:center; }
+  #time{ font-size:64px; font-weight:600; letter-spacing:-1px; line-height:1;
+    text-shadow:0 1px 12px rgba(0,0,0,.25); }
+  #date{ font-size:16px; font-weight:600; margin-top:4px; opacity:.95; }
+
+  #hint{ font-size:14px; font-weight:500; opacity:.85; margin-top:30px; }
+  #dots{ display:flex; gap:15px; margin-top:14px; }
+  .dot{ width:11px; height:11px; border-radius:50%; border:1.3px solid rgba(255,255,255,.75); transition:background .1s; }
+  .dot.filled{ background:#fff; }
+
+  #keypad{ display:grid; grid-template-columns:repeat(3,72px); gap:18px; margin-top:32px; }
+  .key{ width:72px; height:72px; border-radius:50%; background:rgba(255,255,255,.14);
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+    color:#fff; font-size:30px; font-weight:400; display:flex; align-items:center; justify-content:center;
+    border:none; padding:0; }
+  .key span.sub{ display:none; }
+  .key:active{ background:rgba(255,255,255,.32); }
+  .key.ghost{ background:none; visibility:hidden; }
+  #delKey{ background:none; font-size:16px; font-weight:500; visibility:hidden; }
+
+  #emerg{ position:absolute; bottom:calc(env(safe-area-inset-bottom,0px) + 14px); left:50%; transform:translateX(-50%);
+    font-size:15px; opacity:.85; }
+
+  /* settings */
+  #settings{ position:fixed; inset:0; background:#1c1c1e; color:#fff; z-index:10;
+    padding:calc(env(safe-area-inset-top,0px) + 24px) 22px calc(env(safe-area-inset-bottom,0px) + 24px);
+    transform:translateY(100%); transition:transform .35s ease; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  #settings.show{ transform:translateY(0); }
+  #settings h2{ font-size:22px; margin:0 0 4px; }
+  #settings p.sub{ font-size:13px; opacity:.55; margin:0 0 8px; }
+  #settings label{ display:block; font-size:13px; opacity:.6; margin:20px 0 6px; }
+  #settings input[type=text], #settings select{ width:100%; padding:12px; border-radius:10px; border:none;
+    background:#2c2c2e; color:#fff; font-size:16px; appearance:none; -webkit-appearance:none; }
+  #bgBtn{ width:100%; padding:12px; border-radius:10px; border:none; background:#2c2c2e; color:#fff; font-size:15px; }
+  #target{ margin-top:20px; font-size:14px; opacity:.8; line-height:1.5; }
+  #target b{ color:#30d158; font-weight:600; font-size:16px; }
+  #done{ margin-top:30px; width:100%; padding:13px; border-radius:10px; border:none;
+    background:#0a84ff; color:#fff; font-size:16px; font-weight:500; }
+  #upload{ display:none; }
+</style>
+</head>
+<body>
+
+<div id="bg"></div><div id="scrim"></div>
+
+<input type="file" id="upload" accept="image/*">
+
+<div id="lock">
+  <div id="clockWrap">
+    <div id="time">9:41</div>
+    <div id="date">Thursday, September 24</div>
+  </div>
+  <div id="hint">Enter Passcode</div>
+  <div id="dots"></div>
+  <div id="keypad"></div>
+</div>
+<div id="emerg">Emergency</div>
+
+<div id="settings">
+  <h2>Settings</h2>
+  <p class="sub">Hidden from the lock screen — long-press the clock to get back here.</p>
+
+  <label>Background</label>
+  <button id="bgBtn">Choose Photo…</button>
+
+  <label>4-digit number to force</label>
+  <input type="text" id="force" maxlength="4" inputmode="numeric" placeholder="e.g. 4127">
+
+  <label>Append live time as</label>
+  <select id="mode">
+    <option value="min">Minutes (2 digits)</option>
+    <option value="hr">Hour (2 digits)</option>
+    <option value="hrmin">Hour + Minutes (4 digits)</option>
+  </select>
+
+  <label>Clock format</label>
+  <select id="fmt">
+    <option value="12">12-hour</option>
+    <option value="24">24-hour</option>
+  </select>
+
+  <div id="target">Current full code (private reference only —<br>the keypad does not actually check this):<br><b id="targetval">— set a number —</b></div>
+
+  <button id="done">Done</button>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let st = {};
+try{ st = JSON.parse(localStorage.getItem('lockProp')||'{}'); }catch(e){ st = {}; }
+let force = st.force || '';
+let mode  = st.mode  || 'min';
+let fmt   = st.fmt   || '12';
+let bg    = st.bg    || '';
+
+if(bg) $('bg').style.backgroundImage = `url(${bg})`;
+$('force').value = force; $('mode').value = mode; $('fmt').value = fmt;
+
+function save(){
+  localStorage.setItem('lockProp', JSON.stringify({force,mode,fmt,bg}));
+}
+function pad(n){ return n.toString().padStart(2,'0'); }
+
+function timeParts(){
+  const d = new Date();
+  let h24 = d.getHours(), m = d.getMinutes();
+  let h12 = h24 % 12; if(h12 === 0) h12 = 12;
+  return {h24,h12,m,d};
+}
+
+function liveSuffix(){
+  const {h24,h12,m} = timeParts();
+  const h = (fmt === '12') ? h12 : h24;
+  if(mode === 'min')   return pad(m);
+  if(mode === 'hr')    return pad(h);
+  if(mode === 'hrmin') return pad(h) + pad(m);
+  return '';
+}
+
+function entryLen(){ return (force ? force.length : 4) + liveSuffix().length; }
+
+function updateClock(){
+  const {h24,h12,m,d} = timeParts();
+  const h = (fmt === '12') ? h12 : h24;
+  $('time').textContent = `${h}:${pad(m)}`;
+  $('date').textContent = d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'});
+  updateTarget();
+}
+
+function updateTarget(){
+  $('targetval').textContent = force ? (force + liveSuffix()) : '— set a number —';
+}
+
+function buildDots(){
+  const n = entryLen();
+  const wrap = $('dots'); wrap.innerHTML = '';
+  for(let i=0;i<n;i++){ const d=document.createElement('div'); d.className='dot'; wrap.appendChild(d); }
+}
+
+let entered = 0;
+function fillDots(){
+  document.querySelectorAll('.dot').forEach((d,i)=> d.classList.toggle('filled', i < entered));
+  $('delKey').style.visibility = entered > 0 ? 'visible' : 'hidden';
+}
+
+function buildKeypad(){
+  const layout = ['1','2','3','4','5','6','7','8','9','ghost','0','del'];
+  const wrap = $('keypad'); wrap.innerHTML = '';
+  layout.forEach(k=>{
+    const b = document.createElement('button');
+    if(k === 'ghost'){ b.className = 'key ghost'; wrap.appendChild(b); return; }
+    b.className = 'key';
+    if(k === 'del'){ b.id = 'delKey'; b.textContent = '⌫'; }
+    else { b.textContent = k; }
+    b.addEventListener('click', ()=> press(k));
+    wrap.appendChild(b);
+  });
+}
+
+function press(k){
+  const n = entryLen();
+  if(k === 'del'){ entered = Math.max(0, entered-1); fillDots(); return; }
+  if(entered < n){ entered++; fillDots(); }
+  if(entered >= n){ setTimeout(unlock, 200); }
+}
+
+function unlock(){
+  $('lock').classList.add('hide');
+  setTimeout(()=>{
+    entered = 0; fillDots();
+    $('lock').classList.remove('hide');
+  }, 2200);
+}
+
+// long-press clock to open settings
+let pressTimer;
+$('clockWrap').addEventListener('pointerdown', ()=>{ pressTimer = setTimeout(openSettings, 600); });
+['pointerup','pointerleave','pointercancel'].forEach(ev=>
+  $('clockWrap').addEventListener(ev, ()=> clearTimeout(pressTimer)));
+
+function openSettings(){ $('settings').classList.add('show'); }
+function closeSettings(){ $('settings').classList.remove('show'); }
+
+$('done').addEventListener('click', ()=>{
+  force = $('force').value.replace(/\D/g,'').slice(0,4);
+  mode = $('mode').value; fmt = $('fmt').value;
+  save(); closeSettings(); buildDots(); fillDots(); updateClock();
+});
+$('force').addEventListener('input', ()=>{ force = $('force').value.replace(/\D/g,'').slice(0,4); updateTarget(); });
+$('mode').addEventListener('change', ()=>{ mode = $('mode').value; updateTarget(); });
+$('fmt').addEventListener('change', ()=>{ fmt = $('fmt').value; updateClock(); });
+
+$('bgBtn').addEventListener('click', ()=> $('upload').click());
+$('upload').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxW = 1080;
+      const scale = Math.min(1, maxW/img.width);
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width*scale); c.height = Math.round(img.height*scale);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      bg = c.toDataURL('image/jpeg', 0.82);
+      $('bg').style.backgroundImage = `url(${bg})`;
+      save();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(f);
+});
+
+buildKeypad(); buildDots(); fillDots(); updateClock();
+setInterval(updateClock, 1000);
+</script>
+</body>
+</html>
