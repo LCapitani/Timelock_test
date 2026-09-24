@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lock">
+<meta name="theme-color" content="#11151e">
+<meta name="description" content="A local-only, configurable lock-screen demonstration. Not a device security feature.">
+<title>Lock</title>
+<style>
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0c0e13; }
+body { color: white; user-select: none; -webkit-user-select: none; overscroll-behavior: none; }
+button, input, select { font: inherit; }
+button { color: inherit; border: 0; cursor: pointer; touch-action: manipulation; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #7dbaff; outline-offset: 4px; }
+button:disabled { cursor: default; opacity: .4; }
+button { -webkit-touch-callout: none; }
+input, select { user-select: auto; -webkit-user-select: auto; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+#stage {
+  --unit: 1;
+  --top: max(var(--safe-top), 44px);
+  --bottom: max(var(--safe-bottom), 20px);
+  --clock-size: 100px;
+  --clock-weight: 650;
+  --clock-width: 1;
+  --key-size: 78px;
+  --icon-size: 62px;
+  position: relative; isolation: isolate; overflow: hidden; width: 100%; height: 100%; height: 100dvh;
+  background: #171d38;
+}
+/* All artwork is drawn locally. No remote images, fonts, libraries or analytics. */
+.wallpaper {
+  position: absolute; inset: 0; pointer-events: none; background-position: center; background-size: cover;
+  background-image:
+    radial-gradient(ellipse at 92% 11%, rgba(113,200,229,.91) 0%, rgba(63,114,174,.34) 26%, transparent 52%),
+    radial-gradient(ellipse at 8% 44%, #151b4a 0%, rgba(20,31,83,.8) 25%, transparent 62%),
+    radial-gradient(ellipse at 91% 66%, rgba(177,95,161,.75) 0%, transparent 48%),
+    radial-gradient(ellipse at 19% 100%, #fab399 0%, #bf6387 21%, transparent 55%),
+    linear-gradient(152deg, #335a8a 0%, #392454 52%, #472c5c 100%);
+}
+.wallpaper:not(.custom)::after {
+  content: ""; position: absolute; width: 170%; height: 86%; top: -28%; left: -77%; border-radius: 48%;
+  transform: rotate(-24deg); border: 1px solid rgba(154,196,250,.15);
+  background: linear-gradient(170deg, rgba(16,30,64,.1), rgba(13,22,66,.92));
+  box-shadow: 22px 28px 100px rgba(16,23,60,.44), 0 6px 8px rgba(148,203,244,.13);
+}
+.scene { position: absolute; inset: 0; visibility: hidden; opacity: 0; pointer-events: none; }
+.scene.active { visibility: visible; opacity: 1; pointer-events: auto; }
+#lockScreen { z-index: 20; transition: opacity .28s, transform .42s cubic-bezier(.2,.75,.2,1); }
+#lockScreen::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg, rgba(0,0,0,.19), transparent 50%, rgba(0,0,0,.06)); pointer-events: none; }
+.clock-button {
+  position: absolute; z-index: 1; top: calc(var(--top) + 31px); left: 0; width: 100%;
+  background: none; padding: 0 12px; text-align: center; color: #f7f8ff;
+  text-shadow: 0 1px 18px rgba(11,17,44,.08); touch-action: none;
+}
+#date { font-size: calc(21px * var(--unit)); font-weight: 550; letter-spacing: -.45px; line-height: 1.3; }
+#time {
+  font-size: calc(var(--clock-size) * var(--unit)); font-weight: var(--clock-weight); line-height: 1.02;
+  letter-spacing: -.065em; margin: 2px 0 0; padding-right: .055em; font-variant-numeric: tabular-nums;
+  transform: scaleX(var(--clock-width)); font-optical-sizing: auto;
+}
+#lockGlyph { position: absolute; top: calc(var(--top) + 7px); left: calc(50% - 8px); width: 16px; height: 19px; z-index: 2; }
+.lock-controls { position: absolute; z-index: 2; bottom: calc(var(--bottom) + 30px); left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 46px; }
+.round-control { width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center; background: rgba(25,28,44,.38); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.09); }
+.round-control svg { width: 23px; height: 23px; }
+.round-control:active { background: rgba(255,255,255,.38); }
+#swipeHint { position: absolute; z-index: 2; bottom: calc(var(--bottom) + 8px); left: 0; right: 0; text-align: center; font-size: 14px; letter-spacing: -.15px; }
+.home-indicator { position: absolute; z-index: 40; height: 5px; width: 134px; left: calc(50% - 67px); bottom: 8px; background: #fff; border-radius: 9px; pointer-events: none; }
+/* Installed iOS apps already have the OS status bar and home indicator. */
+.native-ui .drawn-status, .native-ui #gestureBar { visibility: hidden; }
+.drawn-status { position: absolute; z-index: 42; left: 0; right: 0; height: var(--top); padding: 12px 27px 0; display: flex; align-items: center; justify-content: space-between; pointer-events: none; font-size: 15px; font-weight: 600; letter-spacing: -.3px; }
+#statusLeft { min-width: 60px; text-align: center; }
+#stage[data-screen="lock"] #statusLeft { font-size: 13px; font-weight: 500; }
+.status-right { display: flex; align-items: center; gap: 5px; }
+.status-right .signal { width: 18px; height: 12px; }
+.status-right .wifi { width: 16px; height: 12px; }
+.status-right .battery { width: 26px; height: 13px; }
+#passcodeScreen { z-index: 25; transition: opacity .25s, transform .4s cubic-bezier(.2,.8,.2,1); }
+#passcodeScreen .wallpaper { inset: -28px; filter: blur(24px) brightness(.64) saturate(.75); }
+#passcodeScreen::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: rgba(25,28,44,.17); }
+#passLock { position: absolute; z-index: 1; top: calc(var(--top) + 31px); left: calc(50% - 18px); background: none; width: 36px; height: 36px; padding: 6px; touch-action: none; }
+.passcode-content { position: absolute; z-index: 1; left: 0; right: 0; top: 50%; transform: translateY(-43%); display: flex; flex-direction: column; align-items: center; }
+#passTitle { margin: 0; font-size: calc(22px * var(--unit)); line-height: 1.25; font-weight: 400; letter-spacing: -.3px; }
+#dots { display: flex; gap: 19px; justify-content: center; margin-top: 22px; height: 14px; }
+#dots.long-code { gap: 10px; }
+.dot { width: 12px; height: 12px; border: 1.15px solid rgba(255,255,255,.92); border-radius: 50%; }
+.dot.filled { background: #fff; }
+#keypad { display: grid; grid-template-columns: repeat(3, var(--key-size)); gap: calc(18px * var(--unit)) calc(28px * var(--unit)); margin-top: calc(55px * var(--unit)); }
+.key { width: var(--key-size); height: var(--key-size); border-radius: 50%; padding: 0; background: rgba(255,255,255,.13); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: background .12s; }
+.key:hover { background: rgba(255,255,255,.19); }
+.key:active { background: rgba(255,255,255,.46); }
+.key .number { display: block; font-size: calc(36px * var(--unit)); font-weight: 300; line-height: 1; letter-spacing: 0; }
+.key .letters { font-size: calc(9px * var(--unit)); letter-spacing: 2px; font-weight: 650; height: 12px; line-height: 12px; margin-top: 2px; padding-left: 2px; }
+.key[data-digit="0"] { grid-column: 2; }
+.key[data-digit="0"] .number { transform: translateY(-1px); }
+.pass-actions { width: calc(var(--key-size) * 3 + 56px * var(--unit)); margin-top: calc(32px * var(--unit)); display: flex; justify-content: space-between; }
+.text-control { background: none; padding: 10px 0; min-height: 44px; font-size: 15px; font-weight: 400; }
+.text-control:active { opacity: .55; }
+@keyframes reject { 0%,100% { transform: translateX(0); } 15%,45%,75% { transform: translateX(-12px); } 30%,60%,90% { transform: translateX(12px); } }
+#dots.rejected { animation: reject .42s ease; }
+#homeScreen { z-index: 10; transition: opacity .25s; }
+#homeWallpaper { filter: brightness(.89); }
+#homeContent { height: 100%; position: relative; display: flex; flex-direction: column; padding: calc(var(--top) + 23px) 0 calc(var(--bottom) + 5px); }
+#pagesContainer { flex: 1; min-height: 0; overflow: hidden; touch-action: pan-y; }
+#pagesTrack { height: 100%; display: flex; width: 100%; transition: transform .36s cubic-bezier(.22,.75,.15,1); will-change: transform; }
+.page { flex: 0 0 100%; height: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(6, minmax(0, 1fr)); padding: 0 20px; gap: 0 8px; align-items: start; align-content: start; }
+.app { padding: 0; min-width: 0; background: none; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.app-picture { position: relative; width: var(--icon-size); height: var(--icon-size); border-radius: 23%; overflow: hidden; background: transparent; box-shadow: 0 2px 6px rgba(0,0,0,.13); transition: filter .15s, transform .15s; }
+.app-picture svg { display: block; width: 100%; height: 100%; }
+.app:active .app-picture { filter: brightness(.65); transform: scale(.94); }
+.app-label { display: block; width: 100%; color: #fff; font-size: calc(11px * var(--unit)); line-height: 1.2; letter-spacing: .05px; font-weight: 400; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; text-align: center; text-shadow: 0 1px 3px rgba(0,0,0,.65); }
+#pageDots { display: flex; justify-content: center; align-items: center; flex: 0 0 35px; gap: 8px; margin: 1px 0 7px; }
+.page-dot { width: 7px; height: 7px; padding: 0; border-radius: 50%; background: rgba(255,255,255,.4); position: relative; }
+.page-dot::after { content: ""; position: absolute; inset: -12px; }
+.page-dot.active { background: white; }
+#dock { margin: 0 11px; padding: 16px 11px; border-radius: 34px; display: grid; grid-template-columns: repeat(4, 1fr); flex: 0 0 auto; background: rgba(213,218,240,.23); -webkit-backdrop-filter: blur(35px) saturate(1.5); backdrop-filter: blur(35px) saturate(1.5); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.18); }
+#homeContent { transform: scale(1.1); opacity: 0; }
+#homeScreen.active #homeContent { transform: scale(1); opacity: 1; transition: transform .5s cubic-bezier(.15,.8,.2,1), opacity .3s; }
+#homePhotos { position: absolute; inset: 0; overflow: hidden; touch-action: pan-y; }
+#photoTrack { height: 100%; display: flex; transition: transform .36s cubic-bezier(.22,.75,.15,1); }
+.home-photo { flex: 0 0 100%; min-width: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.native-ui #homePhotos { clip-path: inset(var(--safe-top) 0 var(--safe-bottom) 0); }
+#stage[data-screen="home"].photo-home .drawn-status, #stage[data-screen="home"].photo-home #gestureBar { visibility: hidden; }
+#stage[data-screen="home"].photo-home #homeContent { display: none; }
+#settings { position: absolute; z-index: 100; inset: 0; background: #000; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; color: #f5f5f7; user-select: text; -webkit-user-select: text; }
+.settings-nav { position: sticky; top: 0; z-index: 3; padding: calc(var(--safe-top) + 12px) 20px 11px; display: flex; align-items: center; justify-content: space-between; background: rgba(17,17,18,.94); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-bottom: .5px solid #333; }
+.settings-nav h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.25px; }
+.nav-button { background: none; color: #0a84ff; padding: 8px 0; min-width: 50px; font-size: 17px; }
+.nav-button:last-child { font-weight: 600; text-align: right; }
+.settings-body { padding: 23px 17px calc(var(--safe-bottom) + 30px); max-width: 540px; margin: auto; }
+.settings-body h2 { font-size: 32px; letter-spacing: -.7px; margin: 0 0 8px; }
+.intro { font-size: 14px; color: #96969e; line-height: 1.5; margin: 0 0 25px; }
+.group-title { font-size: 12px; text-transform: uppercase; letter-spacing: .35px; color: #96969e; margin: 25px 14px 8px; font-weight: 400; }
+.group { border-radius: 12px; background: #1c1c1e; overflow: hidden; }
+.row { position: relative; padding: 13px 15px; font-size: 16px; }
+.row + .row::before { content: ""; position: absolute; left: 15px; top: 0; right: 0; height: .5px; background: #3a3a3c; }
+.row label { display: block; margin-bottom: 8px; }
+.row.inline { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+.row.inline label { margin: 0; flex: 1; }
+.row input[type="text"] { background: #2c2c2e; color: #fff; border: 0; border-radius: 8px; padding: 11px 12px; width: 100%; min-width: 0; font-size: 19px; letter-spacing: 2px; }
+.row select { color: #9ca1ab; background: #1c1c1e; border: 0; font-size: 15px; max-width: 62%; text-align: right; }
+.row input[type="range"] { width: 100%; accent-color: #0a84ff; margin: 8px 0; }
+.range-label { display: flex; justify-content: space-between; gap: 12px; }
+.range-label output { color: #a0a0a8; font-variant-numeric: tabular-nums; }
+.explanation { margin: 7px 14px 15px; font-size: 12px; line-height: 1.5; color: #93939d; }
+.action-row { display: block; width: 100%; text-align: left; color: #0a84ff; background: none; padding: 14px 15px; font-size: 16px; }
+.action-row.danger { color: #ff6961; }
+.asset-status { color: #9c9ca6; font-size: 12px; display: block; margin-top: 4px; }
+.target-card { background: #14251e; border: 1px solid rgba(74,207,132,.14); border-radius: 12px; padding: 16px; margin-top: 16px; }
+.target-card small { display: block; color: #a0b8ab; font-size: 12px; }
+#targetval { display: block; font-size: 29px; font-weight: 600; letter-spacing: 3px; margin-top: 7px; overflow-wrap: anywhere; color: #74e6a6; }
+#codeExplanation { display: block; font-size: 12px; line-height: 1.5; color: #8bac9a; margin-top: 7px; }
+.warning { border-radius: 9px; background: #38241b; color: #ffd0b0; padding: 12px 14px; font-size: 13px; line-height: 1.5; margin: 15px 0; }
+#formError { color: #ff9690; padding: 12px 0 0; font-size: 14px; line-height: 1.4; }
+.primary-button { display: block; width: 100%; padding: 15px; margin-top: 22px; border-radius: 12px; background: #0a84ff; color: white; font-weight: 600; font-size: 16px; }
+.note { font-size: 12px; line-height: 1.6; color: #8b8b95; margin-top: 20px; }
+#toast { position: absolute; z-index: 140; bottom: calc(var(--bottom) + 110px); left: 24px; right: 24px; border-radius: 18px; background: rgba(33,34,40,.96); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); color: #fff; padding: 14px 18px; font-size: 13px; text-align: center; line-height: 1.4; box-shadow: 0 8px 30px #0005; pointer-events: none; }
+#desktopNote { display: none; }
+#hardwareIsland { display: none; }
+@media (min-width: 700px) and (min-height: 650px) and (pointer: fine) {
+  body { display: grid; place-items: center; }
+  #stage { width: min(393px, calc((100dvh - 56px) * .4612676)); height: min(852px, calc(100dvh - 56px)); border-radius: 48px; box-shadow: 0 0 0 8px #23262d, 0 0 0 10px #3b3e45, 0 25px 100px #0009; }
+  #hardwareIsland { display: block; position: absolute; z-index: 80; width: 100px; height: 29px; background: #08090a; border-radius: 30px; top: 11px; left: calc(50% - 50px); pointer-events: none; }
+  #desktopNote { display: block; position: fixed; left: 32px; bottom: 28px; width: 190px; color: #777d8b; font-size: 12px; line-height: 1.7; }
+  #desktopNote strong { display: block; font-size: 14px; color: #c4c9d3; font-weight: 500; margin-bottom: 4px; }
+  #desktopNote button { margin: 8px 0 0; color: #9eafd0; background: none; padding: 0; font-size: 12px; }
+}
+#stage.compact .clock-button { top: calc(var(--top) + 23px); }
+#stage.compact .passcode-content { transform: translateY(-42%); }
+#stage.compact #keypad { margin-top: 30px; gap: 14px 26px; }
+#stage.compact .pass-actions { margin-top: 16px; }
+#stage.compact #passLock { top: calc(var(--top) + 8px); }
+#stage.compact #homeContent { padding-top: calc(var(--top) + 12px); }
+#stage.compact #dock { padding-top: 12px; padding-bottom: 12px; }
+#stage.compact #pageDots { flex-basis: 25px; margin-bottom: 3px; }
+#stage.very-short #passLock { display: none; }
+#stage.very-short .passcode-content { top: calc(var(--top) + 10px); transform: none; }
+#stage.very-short #dots { margin-top: 14px; }
+#stage.very-short #keypad { margin-top: 18px; gap: 10px 28px; }
+#stage.very-short .pass-actions { margin-top: 8px; }
+#stage.very-short #homeContent { padding-top: calc(var(--top) + 8px); }
+#stage.very-short .page { grid-template-rows: repeat(4, minmax(0,1fr)); }
+#stage.very-short .app-label { font-size: 10px; }
+#stage.very-short #dock { padding-top: 9px; padding-bottom: 9px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+}
+</style>
+</head>
+<body>
+<!-- Only the performer-chosen demonstration number is saved. Entries are never stored. -->
+<script id="embedded-config" type="application/json">null</script>
+<main id="stage" data-screen="lock" aria-label="Lock screen demonstration">
+  <div id="baseWallpaper" class="wallpaper"></div>
+  <section id="homeScreen" class="scene" aria-label="Recreated Home Screen" aria-hidden="true" inert>
+    <div id="homeWallpaper" class="wallpaper"></div>
+    <div id="homeContent">
+      <div id="pagesContainer"><div id="pagesTrack"></div></div>
+      <nav id="pageDots" aria-label="Home Screen pages"></nav>
+      <div id="dock" aria-label="Dock"></div>
+    </div>
+    <div id="homePhotos" hidden><div id="photoTrack"></div></div>
+  </section>
+  <section id="lockScreen" class="scene active" aria-label="Lock Screen" aria-hidden="false">
+    <div id="lockWallpaper" class="wallpaper"></div>
+    <svg id="lockGlyph" viewBox="0 0 24 28" aria-hidden="true"><path d="M6 12V8a6 6 0 0 1 12 0v4" fill="none" stroke="currentColor" stroke-width="3"/><rect x="3" y="11" width="18" height="15" rx="3" fill="currentColor"/></svg>
+    <button id="clockWrap" class="clock-button" aria-label="Show passcode. Hold to open demo settings."><span id="date" style="display:block"></span><span id="time" style="display:block">9:41</span></button>
+    <div class="lock-controls">
+      <button id="flashlight" class="round-control" aria-label="Flashlight (visual demo)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 2h8v4l-2 3v11a2 2 0 0 1-4 0V9L8 6V2zm0 3h8v1H8V5z"/><rect x="11" y="11" width="2" height="4" rx="1" fill="#626875"/></svg></button>
+      <button id="camera" class="round-control" aria-label="Camera (visual demo)"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5l1.5-2h5L16 5h4a2 2 0 0 1 2 2v12H2V7a2 2 0 0 1 2-2h4z"/><circle cx="12" cy="12" r="4.2" fill="#535965"/><circle cx="12" cy="12" r="2.8" fill="currentColor"/></svg></button>
+    </div>
+    <div id="swipeHint">Swipe up to unlock</div>
+  </section>
+  <section id="passcodeScreen" class="scene" aria-label="Enter demonstration passcode" aria-hidden="true" inert>
+    <div id="passWallpaper" class="wallpaper"></div>
+    <button id="passLock" aria-label="Hold to open demo settings"><svg viewBox="0 0 24 28" fill="none" aria-hidden="true"><path d="M6 12V8a6 6 0 0 1 12 0v4" stroke="currentColor" stroke-width="2.5"/><rect x="3" y="11" width="18" height="15" rx="3" fill="currentColor"/></svg></button>
+    <div class="passcode-content">
+      <h1 id="passTitle">Enter Passcode</h1>
+      <div id="dots" aria-label="No digits entered"></div>
+      <div id="keypad" aria-label="Passcode keypad"></div>
+      <div class="pass-actions"><button id="emergency" class="text-control">Emergency</button><button id="deleteCancel" class="text-control">Cancel</button></div>
+    </div>
+  </section>
+  <div class="drawn-status" aria-hidden="true"><span id="statusLeft">Carrier</span><div class="status-right">
+    <svg class="signal" viewBox="0 0 20 14" fill="currentColor"><rect x="0" y="9" width="3.5" height="5" rx=".8"/><rect x="5.2" y="6" width="3.5" height="8" rx=".8"/><rect x="10.4" y="3" width="3.5" height="11" rx=".8"/><rect x="15.6" width="3.5" height="14" rx=".8"/></svg>
+    <svg class="wifi" viewBox="0 0 20 15" fill="currentColor"><path d="M0 3a16 16 0 0 1 20 0l-2.4 2.4a12.4 12.4 0 0 0-15.2 0L0 3zm4.1 4.2a9.4 9.4 0 0 1 11.8 0l-2.4 2.4a5.8 5.8 0 0 0-7 0L4.1 7.2zM8 11.3a3.2 3.2 0 0 1 4 0L10 14l-2-2.7z"/></svg>
+    <svg class="battery" viewBox="0 0 29 14"><rect x=".6" y=".6" width="24.5" height="12.8" rx="3.4" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.2"/><path d="M27 4.5v5c2-1 2-4 0-5" fill="currentColor" opacity=".55"/><rect x="2.5" y="2.5" width="20.5" height="9" rx="1.7" fill="currentColor"/></svg>
+  </div></div>
+  <div id="gestureBar" class="home-indicator" aria-hidden="true"></div>
+  <div id="hardwareIsland" aria-hidden="true"></div>
+  <section id="settings" role="dialog" aria-modal="true" aria-labelledby="settingsHeading" hidden>
+    <div class="settings-nav"><button id="cancelSettings" class="nav-button">Cancel</button><h1 id="settingsHeading">Demo Settings</h1><button id="done" class="nav-button">Done</button></div>
+    <div class="settings-body">
+      <h2>Make it yours.</h2>
+      <p class="intro">Choose the only number that unlocks this demonstration, then match the look to your iPhone.</p>
+      <div id="storageWarning" class="warning" role="status" hidden></div>
+      <h3 class="group-title">The force</h3>
+      <div class="group">
+        <div class="row"><label for="force">Force number</label><input id="force" type="text" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="4 to 8 digits" aria-describedby="forceHelp"></div>
+        <div class="row inline"><label for="mode">Append live time</label><select id="mode"><option value="none">None - force only</option><option value="min">Minutes (2 digits)</option><option value="hr">Hour (2 digits)</option><option value="hrmin">Hour + minutes (4 digits)</option></select></div>
+        <div class="row inline"><label for="fmt">Clock format</label><select id="fmt"><option value="12">12-hour</option><option value="24">24-hour</option></select></div>
+      </div>
+      <p id="forceHelp" class="explanation">Exactly 4 to 8 digits; leading zeros are preserved. With "None", only the exact force number works. A time suffix, when enabled, is part of the required code.</p>
+      <div class="target-card"><small>Only accepted code right now</small><strong id="targetval">Not configured</strong><span id="codeExplanation"></span></div>
+      <p class="explanation">For a live suffix, the time is captured on the first digit and held for that attempt, for up to 30 seconds. A new attempt uses the new time.</p>
+      <div id="formError" role="alert" hidden></div>
+      <h3 class="group-title">Appearance</h3>
+      <div class="group">
+        <div class="row inline"><label for="startScreen">Start on</label><select id="startScreen"><option value="lock">Lock Screen</option><option value="passcode">Passcode keypad</option></select></div>
+        <div class="row"><label class="range-label" for="clockSize"><span>Clock size</span><output id="clockSizeValue">100 px</output></label><input id="clockSize" type="range" min="76" max="116" step="1" value="100"></div>
+        <div class="row"><label class="range-label" for="clockWeight"><span>Clock weight</span><output id="clockWeightValue">650</output></label><input id="clockWeight" type="range" min="300" max="800" step="50" value="650"></div>
+        <div class="row"><label class="range-label" for="clockWidth"><span>Clock width</span><output id="clockWidthValue">100%</output></label><input id="clockWidth" type="range" min="88" max="110" step="1" value="100"></div>
+        <button id="wallpaperButton" class="action-row">Choose wallpaper<span id="wallpaperStatus" class="asset-status">Built-in wallpaper</span></button>
+        <button id="resetWallpaper" class="action-row">Use built-in wallpaper</button>
+        <div class="row inline"><label for="statusMode">Status bar</label><select id="statusMode"><option value="auto">Automatic</option><option value="drawn">Draw in HTML</option><option value="native">Use system bar</option></select></div>
+      </div>
+      <p class="explanation">Uses the iPhone's own system font on iOS. Clock sizes are adjustable because iOS versions, devices and custom Lock Screens differ. Automatic avoids drawing a second status bar in an installed iOS web app.</p>
+      <h3 class="group-title">After unlocking</h3>
+      <div class="group">
+        <div class="row inline"><label for="homeMode">Home Screen</label><select id="homeMode"><option value="icons">Interactive recreation</option><option value="photo">My screenshot</option></select></div>
+        <button id="homePhotoButton" class="action-row">Choose Home Screen screenshot<span id="homePhotoStatus" class="asset-status">No screenshot selected</span></button>
+        <button id="homePhoto2Button" class="action-row">Choose second page (optional)<span id="homePhoto2Status" class="asset-status">No second screenshot</span></button>
+        <button id="clearHomePhotos" class="action-row danger">Remove Home Screen screenshots</button>
+      </div>
+      <p class="explanation">For the closest match, upload an unedited, full-screen screenshot from this same iPhone. It includes your real wallpaper, app icons, labels and dock. Screenshots are visual only: they cannot launch your installed apps. Two screenshots can be swiped between. Their captured clock stays static.</p>
+      <button id="saveLock" class="primary-button">Save &amp; lock</button>
+      <div class="group" style="margin-top:18px"><button id="exportButton" class="action-row">Download configured HTML copy</button></div>
+      <p class="note"><strong>Controls:</strong> Tap the clock or swipe up for the keypad. Hold the clock, small passcode lock, or empty Home Screen background for settings. Double-tap empty Home Screen background to relock. On a keyboard: digits, Backspace, Escape; S opens settings and L relocks.</p>
+      <p class="note"><strong>iPhone setup:</strong> Open the hosted HTML in Safari, use Share &gt; Add to Home Screen, enable Open as Web App when offered, and launch its icon. File previews may not execute JavaScript. This single file has no external dependencies, but guaranteed offline relaunch would require hosting plus a service worker.</p>
+      <p class="note"><strong>A local visual prop, not device security.</strong> Do not enter a real iPhone passcode. No typed entries are saved or transmitted. The chosen force and appearance settings are stored locally when storage is available; a configured export also contains them. HTML cannot unlock iOS or automatically return to the actual system Home Screen. Use the iPhone's Home gesture to leave.</p>
+    </div>
+  </section>
+  <input id="imageUpload" type="file" accept="image/*" hidden>
+  <div id="toast" role="status" hidden></div>
+  <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>
+</main>
+<aside id="desktopNote"><strong>Lock / interactive preview</strong>Tap the clock to begin.<br>Hold it to configure your force.<br>Use your keyboard for the keypad.<br><button id="desktopSettings">Open settings</button></aside>
+<noscript>This demo requires JavaScript. Open it in a browser, not a static file preview.</noscript>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const stage = $('stage');
+  let STORAGE_KEY = 'lockProp.v2';
+  const ATTEMPT_MS = 30000;
+  const originalHTML = '<!doctype html>\n' + document.documentElement.outerHTML;
+  const defaults = {
+    version: 2, force: '', mode: 'none', fmt: '12', startScreen: 'lock',
+    clockSize: 100, clockWeight: 650, clockWidth: 100, statusMode: 'auto',
+    wallpaper: '', homeMode: 'icons', homePhoto: '', homePhoto2: ''
+  };
+  const isCode = value => typeof value === 'string' && /^\d{4,8}$/.test(value);
+  const choice = (value, options, fallback) => options.includes(value) ? value : fallback;
+  const numberIn = (value, low, high, fallback) => Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
+  // Only raster data URLs are permitted for imported/stored pictures.
+  const safeImage = value => typeof value === 'string' && /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=\r\n]+$/.test(value) ? value : '';
+  function normalize(value) {
+    const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+      ...defaults,
+      force: isCode(v.force) ? v.force : '',
+      mode: choice(v.mode, ['none','min','hr','hrmin'], 'none'),
+      fmt: choice(v.fmt, ['12','24'], '12'),
+      startScreen: choice(v.startScreen, ['lock','passcode'], 'lock'),
+      clockSize: numberIn(v.clockSize ?? 100, 76, 116, 100),
+      clockWeight: numberIn(v.clockWeight ?? 650, 300, 800, 650),
+      clockWidth: numberIn(v.clockWidth ?? 100, 88, 110, 100),
+      statusMode: choice(v.statusMode, ['auto','drawn','native'], 'auto'),
+      wallpaper: safeImage(v.wallpaper || v.bg),
+      homeMode: choice(v.homeMode, ['icons','photo'], 'icons'),
+      homePhoto: safeImage(v.homePhoto), homePhoto2: safeImage(v.homePhoto2)
+    };
+  }
+  let storageProblem = '';
+  let embedded = null;
+  try { embedded = JSON.parse($('embedded-config').textContent); } catch (_) { /* unconfigured copy */ }
+  // Each exported copy has its own persistent settings namespace.
+  if (embedded && typeof embedded._instance === 'string' && /^[a-z0-9-]{1,80}$/i.test(embedded._instance)) STORAGE_KEY += '.' + embedded._instance;
+  let restored = null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) { try { restored = JSON.parse(raw); } catch (_) { storageProblem = 'Saved settings were invalid. Set the force again before using the demo.'; } }
+    if (!restored && !embedded) {
+      const legacy = localStorage.getItem('lockProp');
+      if (legacy) {
+        try {
+          const old = JSON.parse(legacy);
+          // Migrate the original force + live-time behavior without changing the saved code.
+          if (old && typeof old === 'object') restored = { ...old, mode: old.mode || 'min', wallpaper: old.bg || '', startScreen: 'passcode' };
+        } catch (_) { /* ignore malformed legacy data */ }
+      }
+    }
+  } catch (_) { storageProblem = 'Browser storage is unavailable. Changes work for this session; download a configured copy to keep them.'; }
+  // An exported configuration seeds its own store; later saved edits win.
+  let config = normalize(restored || embedded);
+  let draft = { ...config };
+  let screen = 'lock';
+  let settingsOpen = false;
+  let typed = '';
+  let attemptTarget = '';
+  let attemptStarted = 0;
+  let attemptToken = 0;
+  let inputBusy = false;
+  let checkTimer = 0, attemptTimer = 0, toastTimer = 0;
+  let currentPage = 0;
+  let appPageCount = 2;
+  let currentAssetsTarget = 'wallpaper';
+  let assetBusy = false;
+  let settingsSession = 0;
+  let oldFocus = null;
+  const pad = n => String(n).padStart(2, '0');
+  function timeParts(date = new Date()) {
+    return { h24: date.getHours(), h12: date.getHours() % 12 || 12, m: date.getMinutes(), d: date };
+  }
+  function suffix(settings, date = new Date()) {
+    const t = timeParts(date);
+    const hour = settings.fmt === '24' ? t.h24 : t.h12;
+    switch (settings.mode) {
+      case 'min': return pad(t.m);
+      case 'hr': return pad(hour);
+      case 'hrmin': return pad(hour) + pad(t.m);
+      default: return '';
+    }
+  }
+  function getTargetCode(settings = config, date = new Date()) {
+    return isCode(settings.force) ? settings.force + suffix(settings, date) : '';
+  }
+  function saveToStorage() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      storageProblem = '';
+      return true;
+    } catch (_) {
+      storageProblem = 'Settings are active for this session, but could not be saved. Browser storage may be full or blocked. Download a configured HTML copy to keep your settings and pictures.';
+      return false;
+    }
+  }
+  function showStorageWarning() {
+    $('storageWarning').textContent = storageProblem;
+    $('storageWarning').hidden = !storageProblem;
+  }
+  function toast(message) {
+    clearTimeout(toastTimer);
+    $('toast').textContent = message;
+    $('toast').hidden = false;
+    toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3400);
+  }
+  function announce(message) { $('announcer').textContent = message; }
+  function updateClock() {
+    const c = settingsOpen ? draft : config;
+    const t = timeParts();
+    const hour = c.fmt === '24' ? pad(t.h24) : String(t.h12);
+    const time = hour + ':' + pad(t.m);
+    $('time').textContent = time;
+    $('statusLeft').textContent = screen === 'lock' ? 'Carrier' : time;
+    $('date').textContent = t.d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    // Built-in Calendar and Clock icons are live, rather than emoji approximations.
+    document.querySelectorAll('[data-calendar-day]').forEach(el => { el.textContent = t.d.getDate(); });
+    document.querySelectorAll('[data-calendar-weekday]').forEach(el => { el.textContent = t.d.toLocaleDateString('en-US',{weekday:'short'}).toUpperCase(); });
+    const seconds = t.d.getSeconds();
+    document.querySelectorAll('[data-clock-hour]').forEach(el => el.setAttribute('transform', 'rotate(' + ((t.h12 % 12) * 30 + t.m / 2) + ' 32 32)'));
+    document.querySelectorAll('[data-clock-minute]').forEach(el => el.setAttribute('transform', 'rotate(' + (t.m * 6 + seconds / 10) + ' 32 32)'));
+    document.querySelectorAll('[data-clock-second]').forEach(el => el.setAttribute('transform', 'rotate(' + (seconds * 6) + ' 32 32)'));
+    if (settingsOpen) updateTargetPreview();
+  }
+  function updateTargetPreview() {
+    const target = getTargetCode(draft);
+    $('targetval').textContent = target || 'Not configured';
+    $('codeExplanation').textContent = !target ? 'Enter a force number containing 4 to 8 digits.' : draft.mode === 'none' ? 'Exact match only. No time suffix and no alternative code.' : draft.force + ' + ' + suffix(draft) + ' = ' + target + ' (' + target.length + ' digits)';
+  }
+  function setWallpaper(el, image) {
+    el.classList.toggle('custom', !!image);
+    el.style.backgroundImage = image ? 'url("' + image + '")' : '';
+  }
+  function applyAppearance(settings) {
+    ['baseWallpaper','lockWallpaper','passWallpaper','homeWallpaper'].forEach(id => setWallpaper($(id), settings.wallpaper));
+    stage.style.setProperty('--clock-size', settings.clockSize + 'px');
+    stage.style.setProperty('--clock-weight', settings.clockWeight);
+    stage.style.setProperty('--clock-width', settings.clockWidth / 100);
+    const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    document.body.classList.toggle('native-ui', settings.statusMode === 'native' || (settings.statusMode === 'auto' && iOS && standalone));
+    const photoMode = settings.homeMode === 'photo' && !!settings.homePhoto;
+    stage.classList.toggle('photo-home', photoMode);
+    $('homePhotos').hidden = !photoMode;
+    $('photoTrack').replaceChildren();
+    if (photoMode) [settings.homePhoto, settings.homePhoto2].filter(Boolean).forEach((source, index) => {
+      const img = document.createElement('img'); img.className = 'home-photo'; img.alt = 'Your Home Screen screenshot, page ' + (index + 1); img.draggable = false; img.src = source;
+      $('photoTrack').append(img);
+    });
+    setPage(0, false);
+  }
+  function syncScenes() {
+    stage.dataset.screen = screen;
+    ['lock','passcode','home'].forEach(name => {
+      const el = $(name === 'passcode' ? 'passcodeScreen' : name + 'Screen');
+      const active = name === screen;
+      el.classList.toggle('active', active);
+      el.setAttribute('aria-hidden', String(!active || settingsOpen));
+      el.inert = !active || settingsOpen;
+    });
+    [...$('pagesTrack').children].forEach((page, i) => { page.inert = screen !== 'home' || settingsOpen || i !== currentPage; });
+    updateClock();
+  }
+  function setScreen(next) {
+    screen = next;
+    syncScenes();
+  }
+  function resetEntry() {
+    clearTimeout(checkTimer); clearTimeout(attemptTimer);
+    typed = ''; attemptTarget = ''; attemptStarted = 0; inputBusy = false; attemptToken++;
+    $('dots').classList.remove('rejected');
+    fillDots();
+  }
+  function buildDots() {
+    const length = getTargetCode().length || 6;
+    $('dots').replaceChildren();
+    $('dots').classList.toggle('long-code', length > 8);
+    for (let i = 0; i < length; i++) { const d = document.createElement('span'); d.className = 'dot'; d.setAttribute('aria-hidden','true'); $('dots').append(d); }
+    fillDots();
+  }
+  function fillDots() {
+    [...$('dots').children].forEach((dot, i) => dot.classList.toggle('filled', i < typed.length));
+    $('dots').setAttribute('aria-label', typed.length + ' of ' + ($('dots').children.length || 6) + ' digits entered');
+    $('deleteCancel').textContent = typed.length ? 'Delete' : 'Cancel';
+  }
+  function showPasscode() {
+    if (settingsOpen) return;
+    if (!isCode(config.force)) { openSettings(); return; }
+    resetEntry(); buildDots(); setScreen('passcode');
+    announce('Enter the demonstration passcode.');
+  }
+  function relock() {
+    resetEntry(); setPage(0, false);
+    setScreen(config.startScreen === 'passcode' && isCode(config.force) ? 'passcode' : 'lock');
+    buildDots();
+  }
+  function unlock() {
+    // This function is called only after an exact, non-empty match. It changes
+    // the actual scene state; success never depends on an animationend event.
+    resetEntry(); setPage(0, false); setScreen('home'); announce('Unlocked. Home Screen.');
+  }
+  function rejectEntry(token) {
+    if (token !== attemptToken || screen !== 'passcode' || settingsOpen) return;
+    $('dots').classList.add('rejected'); announce('Incorrect passcode. Try again.');
+    checkTimer = setTimeout(() => { if (token === attemptToken) resetEntry(); }, 440);
+  }
+  function pressDigit(digit) {
+    if (settingsOpen || screen !== 'passcode' || inputBusy || !/^\d$/.test(digit) || !isCode(config.force)) return;
+    if (typed && Date.now() - attemptStarted >= ATTEMPT_MS) resetEntry();
+    if (!typed) {
+      attemptTarget = getTargetCode(config, new Date());
+      if (!attemptTarget) return; // Fail closed: never accept an unset force.
+      attemptStarted = Date.now();
+      const token = attemptToken;
+      attemptTimer = setTimeout(() => { if (token === attemptToken && !inputBusy) { resetEntry(); announce('Entry timed out. Start again.'); } }, ATTEMPT_MS);
+    }
+    typed += digit; fillDots();
+    if (typed.length === attemptTarget.length) {
+      inputBusy = true; clearTimeout(attemptTimer);
+      const token = attemptToken;
+      // Snapshot the result NOW. No clock rollover or later input may change it.
+      const matches = attemptTarget !== '' && typed === attemptTarget;
+      checkTimer = setTimeout(() => {
+        if (token !== attemptToken || settingsOpen || screen !== 'passcode') return;
+        if (matches) unlock(); else rejectEntry(token);
+      }, 130);
+    }
+  }
+  function deleteOrCancel() {
+    if (settingsOpen || screen !== 'passcode' || inputBusy) return;
+    if (typed) { typed = typed.slice(0,-1); if (!typed) resetEntry(); else fillDots(); }
+    else { resetEntry(); setScreen('lock'); }
+  }
+  const letters = ['', '', 'ABC','DEF','GHI','JKL','MNO','PQRS','TUV','WXYZ'];
+  for (const digit of ['1','2','3','4','5','6','7','8','9','0']) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'key'; button.dataset.digit = digit;
+    button.setAttribute('aria-label', digit + (letters[Number(digit)] ? ', ' + letters[Number(digit)] : ''));
+    const number = document.createElement('span'); number.className = 'number'; number.textContent = digit; button.append(number);
+    if (digit !== '0') { const sub = document.createElement('span'); sub.className = 'letters'; sub.textContent = letters[Number(digit)] || '\u00a0'; button.append(sub); }
+    // Use pointerdown for prompt, reliable taps after a swipe transition.
+    // The following synthesized click must not count the same digit twice.
+    let lastPointerAt = -Infinity;
+    button.addEventListener('pointerdown', event => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      event.preventDefault(); lastPointerAt = Date.now(); pressDigit(digit);
+    });
+    button.addEventListener('click', event => {
+      if (Date.now() - lastPointerAt >= 750 && event.detail === 0) pressDigit(digit);
+    });
+    $('keypad').append(button);
+  }
+  $('deleteCancel').addEventListener('click', deleteOrCancel);
+  $('emergency').addEventListener('click', () => toast('Visual demonstration only. This button does not make emergency calls.'));
+  $('flashlight').addEventListener('click', () => toast('The flashlight is a visual control in this demonstration.'));
+  $('camera').addEventListener('click', () => toast('The camera is a visual control in this demonstration.'));
+
+  /* Self-contained vector icon artwork. This is a recreation, not native apps. */
+  const rect = color => '<rect width="64" height="64" rx="14" fill="' + color + '"/>';
+  const symbol = (bg, shapes) => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true">' + rect(bg) + shapes + '</svg>';
+  const icons = {
+    FaceTime: symbol('#25cb56','<rect x="10" y="20" width="30" height="25" rx="6" fill="white"/><path d="m43 27 11-7v25l-11-7z" fill="white"/>'),
+    Calendar: symbol('#fff','<text x="32" y="18" text-anchor="middle" fill="#f4443e" font-size="10" font-family="-apple-system,Arial,sans-serif" font-weight="600" data-calendar-weekday>THU</text><text x="32" y="52" text-anchor="middle" fill="#111" font-size="36" font-weight="300" font-family="-apple-system,Arial,sans-serif" data-calendar-day>24</text>'),
+    Photos: symbol('#fff', ['#f4c744','#f99b38','#f4676c','#d66cc2','#9790e7','#5bb4f0','#69c7ad','#b9d76e'].map((c,i) => '<ellipse cx="32" cy="18.3" rx="8" ry="12.5" fill="'+c+'" fill-opacity=".86" transform="rotate('+(i*45)+' 32 32)"/>').join('') + '<circle cx="32" cy="32" r="6" fill="#fffc"/>'),
+    Camera: symbol('#d5d6db','<path d="M10 23h11l4-6h14l4 6h11v28H10z" fill="#383b42"/><rect x="12" y="20" width="7" height="3" rx="1" fill="#555"/><circle cx="32" cy="36" r="12" fill="#a7a9af"/><circle cx="32" cy="36" r="9" fill="#20222b"/><circle cx="32" cy="36" r="5.5" fill="#384157"/><circle cx="34" cy="33" r="2" fill="#6684af"/><circle cx="48" cy="27" r="2" fill="#efd379"/>'),
+    Mail: symbol('#2788f1','<rect x="9" y="17" width="46" height="32" rx="4" fill="white"/><path d="m10 19 22 17 22-17M10 47l16-15m28 15L38 32" stroke="#2788f1" stroke-width="2" fill="none"/>'),
+    Clock: symbol('#171719','<circle cx="32" cy="32" r="28" fill="white"/>' + Array.from({length:12},(_,i)=>'<path d="M32 6v3" stroke="#151515" stroke-width="1.5" transform="rotate('+(i*30)+' 32 32)"/>').join('') + '<g fill="#161616" font-family="-apple-system,Arial,sans-serif" font-size="7" text-anchor="middle"><text x="32" y="16">12</text><text x="49" y="35">3</text><text x="32" y="53">6</text><text x="15" y="35">9</text></g><path data-clock-hour d="M32 34V19" stroke="#131313" stroke-width="3" stroke-linecap="round"/><path data-clock-minute d="M32 36V11" stroke="#131313" stroke-width="2" stroke-linecap="round"/><path data-clock-second d="M32 38V10" stroke="#ff8a24" stroke-width="1"/><circle cx="32" cy="32" r="2.5" fill="#ff8a24"/>'),
+    Maps: symbol('#e7eadc','<path d="M0 46 64 4v27L16 64H0" fill="#bae49b"/><path d="M45 0h19v64H44c7-16-7-27 1-40z" fill="#aedbfa"/><path d="M-4 43 68 1M10-2l28 69" stroke="white" stroke-width="12"/><path d="M-4 43 68 1" stroke="#ffce5d" stroke-width="6"/><path d="M10-2l28 69" stroke="#c4c5c8" stroke-width="5"/><circle cx="35" cy="35" r="13" fill="#fff"/><circle cx="35" cy="35" r="10" fill="#2687f1"/><path d="m35 28 5 13-5-3-5 3z" fill="white"/>'),
+    Weather: symbol('#2b90e8','<circle cx="23" cy="24" r="11" fill="#ffdc4d"/><path d="M18 48a9 9 0 0 1 0-18c3-12 20-13 24-1 13-1 18 19 3 19z" fill="white"/>'),
+    Reminders: symbol('#fff','<g stroke="#d7d8dc" stroke-width="1"><path d="M23 18h31M23 32h31M23 46h31"/></g><circle cx="13" cy="18" r="5" fill="#1686f3"/><circle cx="13" cy="32" r="5" fill="#ff5a52"/><circle cx="13" cy="46" r="5" fill="#ffa520"/>'),
+    Notes: symbol('#fff','<path d="M0 0h64v19H0z" fill="#ffd532"/><path d="M0 23h64" stroke="#eee" stroke-width="2"/><path d="M9 34h46M9 44h46M9 54h33" stroke="#e4e4e7" stroke-width="1"/>'),
+    Stocks: symbol('#171719','<path d="M12 11v43M25 11v43M38 11v43M51 11v43" stroke="#3a3d43" stroke-width="1"/><path d="m0 45 11-7 6 5 8-15 8 6 7-11 9 5L64 8" fill="none" stroke="#64b6fe" stroke-width="2.5"/>'),
+    Books: symbol('#ff9229','<path d="M8 16c9-3 16-1 23 4v31c-7-5-14-7-23-4V16zm48 0c-9-3-16-1-23 4v31c7-5 14-7 23-4V16z" fill="white"/>'),
+    'App Store': symbol('#168af0','<g stroke="white" stroke-width="5" stroke-linecap="round"><path d="m21 45 20-33M23 12l14 24M13 39h34M41 41l7 11"/></g>'),
+    Podcasts: symbol('#b646d6','<g fill="none" stroke="white" stroke-width="3"><circle cx="32" cy="28" r="20"/><circle cx="32" cy="28" r="13"/></g><ellipse cx="32" cy="42" rx="9" ry="18" fill="#b646d6"/><circle cx="32" cy="27" r="6" fill="white"/><path d="M26 37q6-4 12 0l-2 17q-4 4-8 0z" fill="white"/>'),
+    TV: symbol('#18191b','<path d="M17 27c-8-4-14 2-13 10 1 8 6 17 12 13 7 5 13-6 14-10-7-4-7-10-2-13-3-3-7-3-11 0zm0-3c-1-6 5-11 10-10 0 6-5 10-10 10z" fill="white"/><text x="32" y="46" fill="white" font-family="Arial,sans-serif" font-size="30" font-weight="600">tv</text>'),
+    Health: symbol('#fff','<path d="M32 48 14 32C0 18 19 6 32 21 45 6 64 18 50 32z" fill="#f04465"/>'),
+    Home: symbol('#fff','<path d="M7 30 32 9l25 21-5 6-5-4v23H17V32l-5 4z" fill="#ffad23"/><rect x="27" y="37" width="11" height="18" rx="1" fill="#fff"/>'),
+    Wallet: symbol('#25262a','<rect x="10" y="12" width="44" height="36" rx="4" fill="#69c6e9"/><rect x="10" y="18" width="44" height="34" rx="4" fill="#ffbe63"/><rect x="10" y="24" width="44" height="30" rx="4" fill="#ed8177"/><path d="M9 30h46v24H9z" fill="#4a4b50"/><rect x="30" y="34" width="26" height="13" rx="4" fill="#67686d"/><circle cx="37" cy="40.5" r="2" fill="#aaa"/>'),
+    Settings: symbol('#aeb1b7','<circle cx="32" cy="32" r="25" fill="#60656e"/><circle cx="32" cy="32" r="21" fill="none" stroke="#dfe0e3" stroke-width="2"/><g stroke="#d6d8dc" stroke-width="5">' + Array.from({length:12},(_,i)=>'<path d="M32 12v9" transform="rotate('+(i*30)+' 32 32)"/>').join('') + '</g><circle cx="32" cy="32" r="13" fill="none" stroke="#d6d8dc" stroke-width="5"/><circle cx="32" cy="32" r="7" fill="#626872"/>'),
+    'Find My': symbol('#e9f0ee','<circle cx="32" cy="32" r="25" fill="#52cd79"/><circle cx="32" cy="32" r="17" fill="none" stroke="#a4edb8" stroke-width="2"/><circle cx="32" cy="32" r="9" fill="none" stroke="#a4edb8" stroke-width="2"/><path d="M32 32V7a25 25 0 0 1 21 12z" fill="#b9f6ca"/><circle cx="32" cy="32" r="5" fill="#368af9" stroke="#fff" stroke-width="2"/>'),
+    Phone: symbol('#2dce5c','<path d="m15 10 11 11-5 7c4 8 7 11 15 15l7-5 11 11c-6 16-21 6-31-4S0 16 15 10z" fill="white" transform="translate(0 -1) scale(1 .98)"/>'),
+    Safari: symbol('#fff','<circle cx="32" cy="32" r="28" fill="#279ee9"/>' + Array.from({length:24},(_,i)=>'<path d="M32 7v3" stroke="#fff" stroke-width="1" transform="rotate('+(i*15)+' 32 32)"/>').join('') + '<path d="m19 47 9-19 17-12-9 20z" fill="white"/><path d="m28 28 17-12-9 20z" fill="#fa4c52"/><path d="m28 28 8 8-17 11z" fill="#ecf0f4"/>'),
+    Messages: symbol('#2dce5c','<ellipse cx="32" cy="30" rx="24" ry="19" fill="white"/><path d="m14 43-2 11 16-7" fill="white"/>'),
+    Music: symbol('#fb375a','<path d="M27 18v28c-10-4-16 3-12 8 4 5 14 1 15-5V28l18-4v16c-10-3-16 4-12 8 5 5 15 1 15-5V12z" fill="white"/>'),
+    Files: symbol('#fff','<path d="M7 17h19l6 6h25v31H7z" fill="#76c5fb"/><rect x="7" y="25" width="50" height="30" rx="3" fill="#2d8eed"/>'),
+    Fitness: symbol('#08090b','<circle cx="32" cy="32" r="22" fill="none" stroke="#fe3764" stroke-width="7"/><circle cx="32" cy="32" r="14" fill="none" stroke="#b8ef2b" stroke-width="6"/><circle cx="32" cy="32" r="6.5" fill="none" stroke="#4ee0d9" stroke-width="5"/><path d="M32 7v6m0 4v6m0 5v6" stroke="#191919" stroke-width="2"/>'),
+    Contacts: symbol('#d9d6d0','<rect x="51" y="11" width="11" height="12" fill="#aaa8a5"/><rect x="51" y="25" width="11" height="12" fill="#aaa8a5"/><rect x="51" y="39" width="11" height="12" fill="#aaa8a5"/><circle cx="28" cy="24" r="11" fill="#aaa7a1"/><path d="M10 53c-2-23 38-23 36 0z" fill="#aaa7a1"/>'),
+    Watch: symbol('#121315','<path d="M24 3h16l2 15H22zM22 46h20l-2 15H24z" fill="#c6c6c8"/><rect x="16" y="14" width="32" height="36" rx="10" fill="#97999b"/><rect x="19" y="17" width="26" height="30" rx="8" fill="#161618"/><path d="M49 25v7" stroke="#aaa" stroke-width="3"/><path d="M25 37 33 22v12h6l-9 10v-7z" fill="#fff"/>'),
+    Shortcuts: symbol('#272345','<path d="m32 11 23 14-23 15L9 25z" fill="#65dae2"/><path d="m32 25 23 14-23 15L9 39z" fill="#ec548c"/><path d="m32 25 12 7-12 8-12-8z" fill="#757bd9"/>'),
+    Tips: symbol('#ffce23','<path d="M22 37c-17-20 23-35 23-12 0 7-6 10-7 15H25z" fill="white"/><path d="M26 43h12m-11 5h10m-8 4h6" stroke="white" stroke-width="3" stroke-linecap="round"/>'),
+    Calculator: symbol('#242426','<rect x="8" y="8" width="48" height="13" rx="4" fill="#8e9097"/><g fill="#65676d"><circle cx="15" cy="32" r="7"/><circle cx="32" cy="32" r="7"/><circle cx="15" cy="49" r="7"/><circle cx="32" cy="49" r="7"/></g><rect x="43" y="25" width="14" height="31" rx="7" fill="#ff9826"/><path d="M47 38h6m-6 6h6" stroke="white" stroke-width="2"/>'),
+    'Voice Memos': symbol('#202123','<path d="M5 31h54" stroke="#626369" stroke-width="1"/><path d="M11 26v12m7-20v28m7-32v35m7-41v49m7-38v29m7-34v34m7-20v12" stroke="#ff464d" stroke-width="3"/>'),
+    Freeform: symbol('#fff','<path d="M10 20h19v19H10z" fill="none" stroke="#ffb721" stroke-width="3"/><circle cx="41" cy="21" r="10" fill="none" stroke="#4bb8e8" stroke-width="3"/><path d="m21 50 14-22 16 22z" fill="none" stroke="#ad77df" stroke-width="3"/>'),
+    Translate: symbol('#1a1b1f','<path d="M10 16h22m-10-5v7M14 21c4 12 11 16 19 18m-5-18C25 34 15 39 9 41" stroke="white" stroke-width="3" fill="none"/><path d="m33 53 10-26 10 26m-17-7h14" stroke="#5295ff" stroke-width="3" fill="none"/>'),
+    Magnifier: symbol('#1d1f22','<circle cx="27" cy="27" r="16" fill="none" stroke="#e5e5e7" stroke-width="4"/><path d="m40 40 14 14" stroke="#e5e5e7" stroke-width="6" stroke-linecap="round"/><path d="M20 27h14m-7-7v14" stroke="#ffba2d" stroke-width="3"/>'),
+    Measure: symbol('#161719','<path d="M14 11h36v43H14z" fill="none" stroke="white" stroke-width="3"/><path d="M14 20h10m-10 9h7m-7 9h10m-10 9h7" stroke="white" stroke-width="2"/><circle cx="49" cy="12" r="5" fill="#ffcc29"/>')
+  };
+  const apps = [
+    ['FaceTime','Calendar','Photos','Camera','Mail','Clock','Maps','Weather','Reminders','Notes','Stocks','Books','App Store','Podcasts','TV','Health','Home','Wallet','Settings','Find My'],
+    ['Contacts','Files','Fitness','Watch','Shortcuts','Tips','Calculator','Voice Memos','Freeform','Translate','Magnifier','Measure']
+  ];
+  function appButton(name, dock = false) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'app'; button.dataset.app = name; button.setAttribute('aria-label', name);
+    const picture = document.createElement('span'); picture.className = 'app-picture'; picture.innerHTML = icons[name]; button.append(picture);
+    if (!dock) { const label = document.createElement('span'); label.className = 'app-label'; label.textContent = name; button.append(label); }
+    button.addEventListener('click', () => {
+      if (Date.now() < ignoreHomeClickUntil || screen !== 'home' || settingsOpen) return;
+      if (name === 'Settings') openSettings(); else toast(name + ' is a visual placeholder, not the installed iPhone app.');
+    });
+    return button;
+  }
+  let ignoreHomeClickUntil = 0;
+  let lastCompactRows = 6;
+  function buildHome(rows = 6) {
+    const capacity = rows * 4;
+    const pages = apps.flatMap(list => Array.from({length: Math.ceil(list.length / capacity)}, (_, i) => list.slice(i * capacity, (i+1) * capacity)));
+    appPageCount = pages.length;
+    $('pagesTrack').replaceChildren(); $('pageDots').replaceChildren(); $('dock').replaceChildren();
+    pages.forEach((list, i) => {
+      const page = document.createElement('div'); page.className = 'page'; page.setAttribute('aria-label', 'Page ' + (i+1));
+      list.forEach(name => page.append(appButton(name))); $('pagesTrack').append(page);
+      const dot = document.createElement('button'); dot.className = 'page-dot'; dot.setAttribute('aria-label', 'Go to page ' + (i+1)); dot.addEventListener('click', () => setPage(i)); $('pageDots').append(dot);
+    });
+    ['Phone','Safari','Messages','Music'].forEach(name => $('dock').append(appButton(name, true)));
+    currentPage = 0; setPage(0, false); updateClock();
+  }
+  function pageCount() { return stage.classList.contains('photo-home') ? (config.homePhoto2 ? 2 : 1) : appPageCount; }
+  function setPage(page, animate = true) {
+    currentPage = Math.max(0, Math.min(pageCount() - 1, page));
+    [$('pagesTrack'), $('photoTrack')].forEach(track => { track.style.transitionDuration = animate ? '' : '0s'; track.style.transform = 'translateX(' + (-currentPage * 100) + '%)'; });
+    [...$('pageDots').children].forEach((dot,i) => { dot.classList.toggle('active', i === currentPage); dot.setAttribute('aria-current', i === currentPage ? 'page' : 'false'); });
+    [...$('pagesTrack').children].forEach((page,i) => { page.inert = screen !== 'home' || settingsOpen || i !== currentPage; });
+  }
+  function fitLayout() {
+    const width = stage.clientWidth, height = stage.clientHeight;
+    const unit = Math.max(.78, Math.min(1.08, width / 393));
+    const short = height < 660;
+    stage.classList.toggle('compact', height < 740);
+    stage.classList.toggle('very-short', short);
+    stage.style.setProperty('--unit', unit);
+    stage.style.setProperty('--key-size', (short ? 64 : 78) * unit + 'px');
+    const iconSize = Math.min(62 * unit, short ? Math.max(39, (height - 195) / 4 - 21) : Math.max(45, (height - 215) / 6 - 17));
+    stage.style.setProperty('--icon-size', iconSize + 'px');
+    const rows = short ? 4 : 6;
+    if (rows !== lastCompactRows) { lastCompactRows = rows; buildHome(rows); }
+    setPage(currentPage, false);
+  }
+  function readDraft() {
+    draft.force = $('force').value;
+    draft.mode = $('mode').value; draft.fmt = $('fmt').value; draft.startScreen = $('startScreen').value;
+    draft.clockSize = Number($('clockSize').value); draft.clockWeight = Number($('clockWeight').value); draft.clockWidth = Number($('clockWidth').value);
+    draft.statusMode = $('statusMode').value; draft.homeMode = $('homeMode').value;
+    $('clockSizeValue').textContent = draft.clockSize + ' px'; $('clockWeightValue').textContent = draft.clockWeight; $('clockWidthValue').textContent = draft.clockWidth + '%';
+    updateTargetPreview();
+  }
+  function assetLabels() {
+    $('wallpaperStatus').textContent = draft.wallpaper ? 'Custom wallpaper selected' : 'Built-in wallpaper';
+    $('homePhotoStatus').textContent = draft.homePhoto ? 'Screenshot selected' : 'No screenshot selected';
+    $('homePhoto2Status').textContent = draft.homePhoto2 ? 'Second screenshot selected' : 'No second screenshot';
+  }
+  function openSettings() {
+    if (settingsOpen) return;
+    resetEntry(); settingsOpen = true; settingsSession++;
+    draft = { ...config }; oldFocus = document.activeElement;
+    ['force','mode','fmt','startScreen','clockSize','clockWeight','clockWidth','statusMode','homeMode'].forEach(key => { $(key).value = draft[key]; });
+    $('formError').hidden = true; $('settings').hidden = false;
+    $('hardwareIsland').style.visibility = 'hidden';
+    showStorageWarning(); assetLabels(); readDraft(); syncScenes();
+    $('settings').scrollTop = 0; $('done').focus({preventScroll:true});
+  }
+  function closeSettings() {
+    settingsOpen = false; settingsSession++; $('settings').hidden = true; $('hardwareIsland').style.visibility = '';
+    applyAppearance(config); syncScenes(); setPage(currentPage, false);
+    if (oldFocus && typeof oldFocus.focus === 'function' && !oldFocus.closest('[inert]')) oldFocus.focus({preventScroll:true});
+  }
+  function validateDraft() {
+    readDraft();
+    let error = '';
+    if (!isCode(draft.force)) error = 'Enter exactly 4 to 8 digits (0-9). No letters, spaces or punctuation.';
+    else if (draft.homeMode === 'photo' && !draft.homePhoto) error = 'Choose a Home Screen screenshot or select Interactive recreation.';
+    else if (assetBusy) error = 'The picture is still being processed. Save after the selected-picture label appears.';
+    $('formError').textContent = error; $('formError').hidden = !error;
+    if (error) { $('formError').scrollIntoView({block:'center',behavior:'smooth'}); return false; }
+    return true;
+  }
+  function commitSettings() {
+    if (!validateDraft()) return;
+    config = normalize(draft);
+    const saved = saveToStorage();
+    closeSettings(); relock();
+    if (!saved) toast('Active for this session only. Export a configured copy to keep these settings.');
+  }
+  $('done').addEventListener('click', commitSettings); $('saveLock').addEventListener('click', commitSettings);
+  $('cancelSettings').addEventListener('click', () => { closeSettings(); if (!isCode(config.force)) setScreen('lock'); });
+  $('desktopSettings').addEventListener('click', openSettings);
+  ['force','mode','fmt','startScreen','clockSize','clockWeight','clockWidth','statusMode','homeMode'].forEach(key => $(key).addEventListener('input', () => {
+    readDraft(); $('formError').hidden = true;
+  }));
+  $('wallpaperButton').addEventListener('click', () => pickImage('wallpaper'));
+  $('homePhotoButton').addEventListener('click', () => pickImage('homePhoto'));
+  $('homePhoto2Button').addEventListener('click', () => pickImage('homePhoto2'));
+  $('resetWallpaper').addEventListener('click', () => { draft.wallpaper = ''; assetLabels(); });
+  $('clearHomePhotos').addEventListener('click', () => { draft.homePhoto = ''; draft.homePhoto2 = ''; draft.homeMode = 'icons'; $('homeMode').value = 'icons'; assetLabels(); });
+  function pickImage(target) {
+    currentAssetsTarget = target; $('imageUpload').value = ''; $('imageUpload').click();
+  }
+  function imageData(file) {
+    return new Promise((resolve,reject) => {
+      if (!file.type.startsWith('image/')) { reject(new Error('Choose an image file.')); return; }
+      if (file.size > 25 * 1024 * 1024) { reject(new Error('Choose a picture smaller than 25 MB.')); return; }
+      const url = URL.createObjectURL(file); const image = new Image();
+      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('This image could not be decoded. Try a PNG or JPEG screenshot.')); };
+      image.onload = () => {
+        try {
+          const scale = Math.min(1, 1400 / image.naturalWidth, 2800 / image.naturalHeight);
+          const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(image.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Image processing is unavailable in this browser.');
+          ctx.fillStyle = '#171d38'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.drawImage(image,0,0,canvas.width,canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', .92));
+        } catch (error) { reject(error); } finally { URL.revokeObjectURL(url); }
+      };
+      image.src = url;
+    });
+  }
+  $('imageUpload').addEventListener('change', async e => {
+    const file = e.target.files[0]; if (!file) return;
+    const target = currentAssetsTarget, session = settingsSession; assetBusy = true;
+    try {
+      const data = await imageData(file);
+      if (session !== settingsSession || !settingsOpen) return;
+      draft[target] = data;
+      if (target === 'homePhoto') { draft.homeMode = 'photo'; $('homeMode').value = 'photo'; }
+      assetLabels();
+    } catch (error) { if (session === settingsSession) toast(error.message || 'Could not load the image.'); }
+    finally { assetBusy = false; }
+  });
+  $('exportButton').addEventListener('click', () => {
+    if (!validateDraft()) return;
+    const instance = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    const encoded = JSON.stringify({ ...normalize(draft), _instance: instance }).replace(/</g, '\\u003c');
+    const exported = originalHTML.replace(/(<script id="embedded-config" type="application\/json">)[\s\S]*?(<\/script>)/, (_, a, b) => a + encoded + b);
+    const url = URL.createObjectURL(new Blob([exported], {type:'text/html;charset=utf-8'}));
+    const link = document.createElement('a'); link.href = url; link.download = 'my-configured-lock.html'; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast('Configured copy created. It includes your force number and chosen pictures.');
+  });
+  function longPress(element, action, canStart = () => true) {
+    let timer = 0, x = 0, y = 0, fired = false, allowed = false;
+    element.addEventListener('pointerdown', e => {
+      if (!canStart(e) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      allowed = true; fired = false; x = e.clientX; y = e.clientY;
+      timer = setTimeout(() => { fired = true; allowed = false; action(); }, 650);
+    });
+    element.addEventListener('pointermove', e => { if (Math.hypot(e.clientX-x, e.clientY-y) > 10) { clearTimeout(timer); allowed = false; } });
+    ['pointerup','pointercancel','pointerleave'].forEach(event => element.addEventListener(event, () => { clearTimeout(timer); allowed = false; }));
+    element.addEventListener('click', e => { if (fired) { e.preventDefault(); e.stopImmediatePropagation(); fired = false; } }, true);
+    element.addEventListener('contextmenu', e => { e.preventDefault(); });
+  }
+  longPress($('clockWrap'), openSettings);
+  $('clockWrap').addEventListener('click', showPasscode);
+  longPress($('passLock'), openSettings);
+  longPress($('homeScreen'), openSettings, e => !e.target.closest('button') && screen === 'home' && !settingsOpen);
+  $('homeScreen').addEventListener('dblclick', e => { if (!e.target.closest('button') && screen === 'home' && !settingsOpen) relock(); });
+  let lockStart = null;
+  $('lockScreen').addEventListener('pointerdown', e => { if (!e.target.closest('.round-control')) lockStart = {x:e.clientX,y:e.clientY}; });
+  $('lockScreen').addEventListener('pointerup', e => {
+    if (lockStart && lockStart.y - e.clientY > 45 && Math.abs(lockStart.x-e.clientX) < 100) showPasscode();
+    lockStart = null;
+  });
+  $('lockScreen').addEventListener('pointercancel', () => { lockStart = null; });
+  $('lockScreen').style.touchAction = 'none';
+  let drag = null;
+  function startDrag(e) {
+    if (screen !== 'home' || settingsOpen || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    drag = {x:e.clientX,y:e.clientY,dx:0,locked:false,id:e.pointerId};
+  }
+  function moveDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.locked && Math.abs(dy) > Math.abs(dx) && Math.abs(dy)>12) { drag = null; return; }
+    if (Math.abs(dx) > 9) drag.locked = true;
+    if (!drag.locked) return;
+    drag.dx = dx;
+    const overscroll = (currentPage === 0 && dx > 0) || (currentPage === pageCount()-1 && dx < 0);
+    const track = stage.classList.contains('photo-home') ? $('photoTrack') : $('pagesTrack');
+    track.style.transitionDuration = '0s'; track.style.transform = 'translateX(' + (-currentPage * stage.clientWidth + dx * (overscroll ? .25 : 1)) + 'px)';
+  }
+  function endDrag(e) {
+    if (!drag) return;
+    if (e && e.pointerId !== drag.id) return;
+    if (drag.locked) {
+      ignoreHomeClickUntil = Date.now() + 400;
+      setPage(currentPage + (Math.abs(drag.dx) > 45 ? (drag.dx < 0 ? 1 : -1) : 0));
+    }
+    drag = null;
+  }
+  $('homeScreen').addEventListener('pointerdown', startDrag);
+  window.addEventListener('pointermove', moveDrag);
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', () => { drag = null; setPage(currentPage); });
+  document.addEventListener('keydown', e => {
+    if (settingsOpen) {
+      if (e.key === 'Escape') { e.preventDefault(); closeSettings(); }
+      if (e.key === 'Tab') {
+        const focusable = [...$('settings').querySelectorAll('button,input,select,[tabindex="0"]')].filter(el => !el.disabled && el.offsetParent !== null);
+        const first = focusable[0], last = focusable[focusable.length-1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+      return;
+    }
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (/^[sS]$/.test(e.key)) { e.preventDefault(); openSettings(); }
+    else if (/^[lL]$/.test(e.key)) { e.preventDefault(); relock(); }
+    else if (screen === 'lock' && ['Enter','ArrowUp',' '].includes(e.key)) { e.preventDefault(); showPasscode(); }
+    else if (screen === 'passcode' && /^\d$/.test(e.key)) { e.preventDefault(); if (!e.repeat) pressDigit(e.key); }
+    else if (screen === 'passcode' && e.key === 'Backspace') { e.preventDefault(); deleteOrCancel(); }
+    else if (screen === 'passcode' && e.key === 'Escape') { e.preventDefault(); resetEntry(); setScreen('lock'); }
+    else if (screen === 'home' && ['ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); setPage(currentPage + (e.key === 'ArrowRight' ? 1 : -1)); }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && screen === 'passcode') resetEntry();
+    else if (!document.hidden) { updateClock(); fitLayout(); }
+  });
+  window.addEventListener('pageshow', () => { if (!settingsOpen) relock(); });
+  if ('ResizeObserver' in window) new ResizeObserver(fitLayout).observe(stage);
+  else window.addEventListener('resize', fitLayout);
+  buildHome(); applyAppearance(config); fitLayout(); buildDots(); relock(); updateClock();
+  setInterval(updateClock, 1000);
+  if (!isCode(config.force)) openSettings();
+})();
+</script>
+</body>
+</html>
